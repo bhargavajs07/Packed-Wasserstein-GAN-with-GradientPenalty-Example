@@ -101,8 +101,8 @@ e_dim       = 1024 # Dimension of the hidden layers.
 f           = f_func(e_dim, d, m).cuda()
 g           = g_func(e_dim, d, d).cuda()
 # Load the previous check-point.
-f.load_state_dict(torch.load('wgan_critic.ckpt'))
-g.load_state_dict(torch.load('wgan_gen.ckpt'))
+f.load_state_dict(torch.load('weights/wgan_critic.ckpt'))
+g.load_state_dict(torch.load('weights/wgan_gen.ckpt'))
 
 f_opt       = optim.Adam(f.parameters(), lr=1e-3, weight_decay=1e-8)
 g_opt       = optim.Adam(g.parameters(), lr=1e-3, weight_decay=1e-8)
@@ -135,12 +135,6 @@ for it in range(max_iters):
         for b in range(f_xh.size()[0]):
             g_x_hat = ag.grad(f_xh[b][0], x_hat, retain_graph=True)[0]
             grad_xh_norm[b] = torch.norm(g_x_hat)
-        #grad_xh_norm = torch.zeros(batch_size).cuda().float()
-        #for b in range(batch_size):
-        #    x_hat = Variable(x[b,:].mul(eps[b]) + g_z[b,:].mul(1-eps[b]), requires_grad= True)
-        #    f_xh  = f(x_hat)
-        #    g_x_hat = ag.grad(f_xh, x_hat, retain_graph=True)[0]
-        #    grad_xh_norm[b] = torch.norm(g_x_hat)
         f_loss = torch.sum(fg_z - f_x + (grad_xh_norm-1)*(grad_xh_norm-1)*lmbda).div(batch_size)
         f_opt.zero_grad()
         f_loss.backward()
@@ -164,7 +158,7 @@ for it in range(max_iters):
         plt.scatter(z_data[:,0],   z_data[:,1],   color='green')
         plt.scatter(data[:,0], data[:,1])
         plt.scatter(gen_data[:,0], gen_data[:,1], color='red')
-        plot_name = 'plt_'+str(it)+'.png'
+        plot_name = 'figures/plt_'+str(it)+'.png'
         plt.savefig(plot_name)
-        torch.save(f.state_dict(), 'wgan_critic.ckpt')
-        torch.save(g.state_dict(), 'wgan_gen.ckpt')
+        torch.save(f.state_dict(), 'weights/wgan_critic.ckpt')
+        torch.save(g.state_dict(), 'weights/wgan_gen.ckpt')
