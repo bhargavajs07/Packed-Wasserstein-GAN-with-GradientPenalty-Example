@@ -32,27 +32,45 @@ class mog_gen:
 class g_func(nn.Module):
     def __init__(self, e_dim, in_dim, out_dim):
         super(g_func, self).__init__()
-        self.in_dim = in_dim
+        self.in_dim = in_dim*2   # Augument the input latent vector by 2 times the dimension to directly learn the mean offsets additively.
         self.hidden_dim = e_dim
         self.out_dim = out_dim
+        do_prob = 0
         self.fc_1    = nn.Linear(self.in_dim, self.hidden_dim)
         self.relu_1  = nn.LeakyReLU()
+        self.do_1    = nn.Dropout(do_prob)
         self.fc_2    = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.relu_2  = nn.LeakyReLU()
+        self.do_2    = nn.Dropout(do_prob)
         self.fc_3    = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.relu_3  = nn.LeakyReLU()
+        self.do_3    = nn.Dropout(do_prob)
         self.fc_4    = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.relu_4  = nn.LeakyReLU()
+        self.do_4    = nn.Dropout(do_prob)
         self.fc_5    = nn.Linear(self.hidden_dim, self.out_dim)
-    def forward(self, z):
+    def forward(self, x):
+        # Augument the input latent vector by 2 times the dimension to directly learn the mean offsets additively.
+        batch_size = x.size()[0]
+        dim        = x.size()[1]
+        in_vec     = torch.ones(batch_size, dim*2).cuda().float()
+        in_vec[:,:dim] = x
+        z = in_vec
         x = self.fc_1(z)
         x = self.relu_1(x)
+        x = self.do_1(x)
         x = self.fc_2(x)
         x = self.relu_2(x)
+        x = self.do_2(x)
         x = self.fc_3(x)
         x = self.relu_3(x)
+        x = self.do_3(x)
+        #h_vec     = torch.ones(batch_size, self.hidden_dim+self.in_dim).cuda().float()
+        #h_vec[:,:self.hidden_dim] = x
+        #x = self.fc_4(h_vec)
         x = self.fc_4(x)
         x = self.relu_4(x)
+        x = self.do_4(x)
         x = self.fc_5(x)
         return x
 
@@ -62,6 +80,7 @@ class f_func(nn.Module):
         self.in_dim     = in_dim*m
         self.hidden_dim = e_dim
         self.out_dim    = 1
+        do_prob         = 0
         self.fc_1       = nn.Linear(self.in_dim, self.hidden_dim)
         self.relu_1     = nn.LeakyReLU()
         self.fc_2       = nn.Linear(self.hidden_dim, self.hidden_dim)
@@ -72,6 +91,10 @@ class f_func(nn.Module):
         self.relu_4     = nn.LeakyReLU()
         self.fc_5       = nn.Linear(self.hidden_dim, self.out_dim)
 
+        self.do_1    = nn.Dropout(do_prob)
+        self.do_2    = nn.Dropout(do_prob)
+        self.do_3    = nn.Dropout(do_prob)
+        self.do_4    = nn.Dropout(do_prob)
     def forward(self, x):
         batch_size = x.size()[0]
         dim        = x.size()[1]
@@ -81,12 +104,16 @@ class f_func(nn.Module):
         z = in_vec
         x = self.fc_1(z)
         x = self.relu_1(x)
+        x = self.do_1(x)
         x = self.fc_2(x)
         x = self.relu_2(x)
+        x = self.do_2(x)
         x = self.fc_3(x)
         x = self.relu_3(x)
+        x = self.do_3(x)
         x = self.fc_4(x)
         x = self.relu_4(x)
+        x = self.do_4(x)
         x = self.fc_5(x)
         return x
     def clip_weights(self, c):
@@ -101,8 +128,8 @@ e_dim       = 1024 # Dimension of the hidden layers.
 f           = f_func(e_dim, d, m).cuda()
 g           = g_func(e_dim, d, d).cuda()
 # Load the previous check-point.
-f.load_state_dict(torch.load('weights/wgan_critic.ckpt'))
-g.load_state_dict(torch.load('weights/wgan_gen.ckpt'))
+f.load_state_dict(torch.load('weights/999_wgan_critic.ckpt'))
+g.load_state_dict(torch.load('weights/999_wgan_gen.ckpt'))
 
 f_opt       = optim.Adam(f.parameters(), lr=1e-3, weight_decay=1e-8)
 g_opt       = optim.Adam(g.parameters(), lr=1e-3, weight_decay=1e-8)
@@ -111,12 +138,12 @@ g_scheduler = optim.lr_scheduler.StepLR(g_opt, step_size=1000, gamma=0.1)
 
 # Gradient Penalty Hyper-parameters.
 c = 1e-2
-batch_size = 256
+batch_size = 128
 lmbda = 10
 
 max_iters = 1000
 sample_gen = mog_gen(d)
-
+train_log = open('train.log', 'w')
 # This loop implements the gradient penalty and Pac-GAN learning algorithm.
 for it in range(max_iters):
     for t_critic in range(5):
@@ -135,7 +162,9 @@ for it in range(max_iters):
         for b in range(f_xh.size()[0]):
             g_x_hat = ag.grad(f_xh[b][0], x_hat, retain_graph=True)[0]
             grad_xh_norm[b] = torch.norm(g_x_hat)
-        f_loss = torch.sum(fg_z - f_x + (grad_xh_norm-1)*(grad_xh_norm-1)*lmbda).div(batch_size)
+        gp     = torch.sum((grad_xh_norm-1)*(grad_xh_norm-1)*lmbda).div(batch_size)
+        m_loss = torch.sum(fg_z - f_x).div(batch_size)
+        f_loss = m_loss + gp
         f_opt.zero_grad()
         f_loss.backward()
         f_scheduler.step()
@@ -148,7 +177,9 @@ for it in range(max_iters):
     g_scheduler.step()
     g_opt.step()
     if((it+1)%20 == 0):
-        print(str(it)+':   F loss: ' + str(f_loss) + ',   G loss: ' + str(g_loss))
+        log_str = str(it)+':   F loss: ' + str(f_loss.detach().cpu().data)+'(:'+str(m_loss.detach().cpu().data)+'+'+str(gp.detach().cpu().data) + ') ,   G loss: ' + str(g_loss.detach().cpu().data)
+        train_log.write(log_str+'\n')
+        print(log_str)
     if((it+1)%(max_iters/20) == 0):
         data = sample_gen.get_random_sample(batch_size)
         z = torch.randn(batch_size,2).cuda().float().mul(1)
@@ -160,5 +191,6 @@ for it in range(max_iters):
         plt.scatter(gen_data[:,0], gen_data[:,1], color='red')
         plot_name = 'figures/plt_'+str(it)+'.png'
         plt.savefig(plot_name)
-        torch.save(f.state_dict(), 'weights/wgan_critic.ckpt')
-        torch.save(g.state_dict(), 'weights/wgan_gen.ckpt')
+        torch.save(f.state_dict(), 'weights/'+str(it)+'_wgan_critic.ckpt')
+        torch.save(g.state_dict(), 'weights/'+str(it)+'_wgan_gen.ckpt')
+train_log.close()
